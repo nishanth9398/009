@@ -1,0 +1,17 @@
+
+-- in selection_2019
+SELECT userid, username, email, usergroup 
+FROM logon 
+WHERE class = 1 -- Faculty
+OR userlevel = 2 -- Dean
+
+-- in selection_2019
+SELECT a.user_id, a.fields, a.faculty_last1, a.faculty_first1, a.faculty_last2, a.faculty_first2, a.faculty_last3, a.faculty_first3, e.group
+FROM applicant a
+JOIN eval_master e ON e.user_id=a.user_id
+WHERE e.batch = 1
+ORDER BY preferred_n
+
+-- in gs
+SELECT last_name, first_name, research_unit
+FROM faculty
