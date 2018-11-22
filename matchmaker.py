@@ -1,43 +1,79 @@
 import csv
 import editdistance
+import pymysql
+
+faculty_sql = """
+SELECT userid, username, email, usergroup
+FROM logon
+WHERE class = 1 -- Faculty
+OR userlevel = 2 -- Dean
+"""
+
+applicants_sql = """
+-- in selection_2019
+SELECT a.user_id,
+       a.fields,
+       a.faculty_last1, a.faculty_first1,
+       a.faculty_last2, a.faculty_first2,
+       a.faculty_last3, a.faculty_first3,
+       e.group -- panel
+FROM applicant a
+JOIN eval_master e ON e.user_id=a.user_id
+WHERE e.batch = 1 -- batch number
+"""
 
 def clean_name(name):
+    """
+    Clean up names for comparaisons.
+    Gets rid of punctuation, spaces, casing and more.
+    Input: string
+    Returns: string
+    """
     n = name.lower()
     n = n.replace("prof", "")
     n = n.replace("í", "i") # For Sile
     n = n.replace("eileen", "") # For Gail
-    n =  "".join([c for c in n if c not in " ,-()_."])
+    n =  "".join([c for c in n if c.isalpha()])
     return n
 
-def get_students(path):
+def get_students(db):
+    """
+    Calls the database and gets student information.
+    Input: database connection object
+    Returns: dictionary of student information, key=student ID
+    """
     students = {}
     faculty_names = set()
 
-    with open(path) as csvfile:
-        reader = csv.reader(csvfile)
-        for row in reader:
-            name, fields, l1, f1, l2, f2, l3, f3, panel = row
-
+    with db.cursor() as cursor:
+        cursor.execute(applicants_sql)
+        for name, fields, l1, f1, l2, f2, l3, f3, panel in cursor.fetchall():
             faculty = [[l1, f1], [l2, f2], [l3, f3]]
 
-            students[name] = { "panel" : panel
+            students[name] = { "panel"   : panel
                              , "faculty" : faculty
-                             , "core" : []
-                             , "minor" : fields.split('/')[:-1]
-                             , "match" : []
+                             , "core"    : []
+                             , "minor"   : fields.split('/')[:-1]
+                             , "match"   : []
                              }
     return students
 
-def get_faculty(info_path, unit_path, fields_path):
+def get_faculty(db, unit_path, fields_path):
+    """
+    Calls the database and files to get faculty information.
+    Input: database connection object, paths to files with units names and fields
+    Returns: dictionary of faculty information, key=faculty email
+    """
     faculty = {}
-    with open(info_path) as csvfile:
-        reader = csv.reader(csvfile)
-        for id, name, email, panel in reader:
-            faculty[email] = { "name" : clean_name(name)
-                              , "id" : id
+
+    with db.cursor() as cursor:
+        cursor.execute(faculty_sql)
+        for id, name, email, panel in cursor.fetchall():
+            faculty[email] = { "name"   : clean_name(name)
+                              , "id"    : id
                               , "panel" : panel
-                              , "unit" : "x"*100
-                              , "core" : []
+                              , "unit"  : "x"*100
+                              , "core"  : []
                               , "minor" : []
                               , "match" : []
                               }
@@ -77,6 +113,11 @@ def get_faculty(info_path, unit_path, fields_path):
 
 
 def fix_names(faculty, students):
+    """
+    Matches and updates students' faculty of interest (free input field) to faculty
+    Input: faculty and student dictionnaries
+    Returns: Nothing
+    """
     real = [faculty[fac]["name"] for fac in faculty]
     accounted_for = 0
     not_in = set()
@@ -97,7 +138,7 @@ def fix_names(faculty, students):
                 accounted_for += 1
                 continue
 
-            # if fl in real:
+            if fl in real:
                 fac.append(fl)
                 accounted_for += 1
                 continue
@@ -134,13 +175,17 @@ def fix_names(faculty, students):
             not_in.add(lf)
 
         students[stu]["faculty"] = fac
-        # print(fac)
 
     print("{:%} of names are accounted for".format(accounted_for/3/len(students)))
     print("{} names are not found:\n{}".format(len(not_in), not_in))
 
 
-def match(students, faculty):
+def match(faculty, students):
+    """
+    Compares faculty and student fields of interest to compute a matching score
+    Input: faculty and student dictionnaries
+    Returns: Nothing
+    """
     interest_score = 15
     co_co_score = 10
     co_mi_score = 5
@@ -171,17 +216,52 @@ def match(students, faculty):
     for fac in faculty:
         faculty[fac]["match"].sort(key = lambda x : -x[0])
 
-def export(students, path):
-    with open(path, "w") as f:
-        f.write("student_id,faculty_id,score\n")
-        for stu in students:
-            for (score, fac) in students[stu]["match"]:
-                f.write(stu + "," + fac + "," + str(score) + "\n")
+def confirm():
+    """
+    Ask user to enter Y or N (case-insensitive), returns True if the answer is Y.
+    Input: None
+    Returns: Bool
+    """
+    answer = ""
+    while answer not in ["y", "n"]:
+        answer = input("Would you like to update the database? [Y/N]? ").lower()
+    return answer == "y"
+
+def export(db, students):
+    """
+    Rewrites the database table with the matching scores after manual confirm.
+    Input: database connection object, student dictionnary
+    Returns: Nothing
+    """
+    if confirm():
+        with db.cursor() as cursor:
+            query = "DELETE FROM field_matrix;"
+            cursor.execute(query)
+            for stu in students:
+                query = "INSERT INTO field_matrix (user_id, faculty_id, closeness) VALUES {} ;"
+                values = ["({}, {}, {})".format(stu, fac, score) for score, fac in students[stu]["match"]]
+                cursor.execute(query.format(", ".join(values)))
+        db.commit()
 
 
+if __name__ == "__main__":
+    # Connect to database
+    with open("password.txt") as f: # "password.txt" is not shared on GitHub
+        [user, password] = f.read().split()
+    db = pymysql.connect(host   = "aad.oist.jp",    # your host, usually localhost
+                         user   = user,             # your username
+                         passwd = password,         # your password
+                         db     = "selection_2019") # name of the database
 
-faculty = get_faculty("input/faculty.csv", "input/units.csv", "input/faculty_fields.csv")
-students = get_students("input/applicants.csv")
-fix_names(faculty, students)
-match(students, faculty)
-export(students, "output/scores.csv")
+    # Faculty information
+    faculty = get_faculty(db, "input/units.csv", "input/faculty_fields.csv")
+    # Student information
+    students = get_students(db)
+    # Data cleanup
+    fix_names(faculty, students)
+    # Compute matching scores
+    match(faculty, students)
+    # Export scores to database
+    export(db, students)
+    # Closes connection
+    db.close()
