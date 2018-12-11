@@ -16,7 +16,7 @@ SELECT a.user_id,
        a.faculty_last1, a.faculty_first1,
        a.faculty_last2, a.faculty_first2,
        a.faculty_last3, a.faculty_first3,
-       e.group -- panel
+       e.group, -- panel
 FROM applicant a
 JOIN eval_master e ON e.user_id=a.user_id
 WHERE e.batch = 1 -- batch number
@@ -36,7 +36,7 @@ def clean_name(name):
     n =  "".join([c for c in n if c.isalpha()])
     return n
 
-def get_students(db):
+def get_students(db, applicants_sql):
     """
     Calls the database and gets student information.
     Input: database connection object
@@ -55,6 +55,7 @@ def get_students(db):
                              , "core"    : []
                              , "minor"   : fields.split('/')[:-1]
                              , "match"   : []
+                             , "comment" : ""
                              }
     return students
 
@@ -76,6 +77,7 @@ def get_faculty(db, unit_path, fields_path):
                               , "core"  : []
                               , "minor" : []
                               , "match" : []
+                              , "avail" : 8
                               }
 
     with open(unit_path) as csvfile:
@@ -243,8 +245,14 @@ def export(db, students):
                 cursor.execute(query.format(", ".join(values)))
         db.commit()
 
+def get_match_distribution(faculty):
+    dist = [0]*100
+    for fac in faculty:
+        for score, _ in faculty[fac]["match"]:
+            dist[score] += 1
+    return dist
 
-if __name__ == "__main__":
+def connect():
     # Connect to database
     with open("password.txt") as f: # "password.txt" is not shared on GitHub
         [user, password] = f.read().split()
@@ -252,11 +260,15 @@ if __name__ == "__main__":
                          user   = user,             # your username
                          passwd = password,         # your password
                          db     = "selection_2019") # name of the database
+    return db
 
+
+if __name__ == "__main__":
+    db = connect()
     # Faculty information
     faculty = get_faculty(db, "input/units.csv", "input/faculty_fields.csv")
     # Student information
-    students = get_students(db)
+    students = get_students(db, applicants_sql)
     # Data cleanup
     fix_names(faculty, students)
     # Compute matching scores
