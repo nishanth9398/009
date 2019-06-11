@@ -1,26 +1,33 @@
 import csv
 import editdistance
 import pymysql
+import math
 
 faculty_sql = """
 SELECT userid, username, email, usergroup
 FROM logon
-WHERE class = 1 -- Faculty
-OR userlevel = 2 -- Dean
+WHERE (class = 1 -- Faculty
+OR userlevel = 2) -- Dean
+AND email IS NOT NULL
 """
 
 applicants_sql = """
 -- in selection_2019
-SELECT a.user_id,
+SELECT a.family_n, a.given_n,
+       a.user_id,
        a.fields,
        a.faculty_last1, a.faculty_first1,
        a.faculty_last2, a.faculty_first2,
        a.faculty_last3, a.faculty_first3,
        e.group, -- panel
+       e.comment -- comment from committee
 FROM applicant a
 JOIN eval_master e ON e.user_id=a.user_id
-WHERE e.batch = 1 -- batch number
+WHERE e.batch = 2 -- batch number
+AND e.rubbish = 2 -- pre-selected candidates
 """
+
+
 
 def clean_name(name):
     """
@@ -43,19 +50,20 @@ def get_students(db, applicants_sql):
     Returns: dictionary of student information, key=student ID
     """
     students = {}
-    faculty_names = set()
 
     with db.cursor() as cursor:
         cursor.execute(applicants_sql)
-        for name, fields, l1, f1, l2, f2, l3, f3, panel in cursor.fetchall():
+        for last, first, name, fields, l1, f1, l2, f2, l3, f3, panel, comment \
+                   in cursor.fetchall():
             faculty = [[l1, f1], [l2, f2], [l3, f3]]
 
-            students[name] = { "panel"   : panel
+            students[name] = { "name"    : last + " " + first
+                             , "panel"   : panel
                              , "faculty" : faculty
                              , "core"    : []
                              , "minor"   : fields.split('/')[:-1]
                              , "match"   : []
-                             , "comment" : ""
+                             , "comment" : comment
                              }
     return students
 
@@ -71,7 +79,7 @@ def get_faculty(db, unit_path, fields_path):
         cursor.execute(faculty_sql)
         for id, name, email, panel in cursor.fetchall():
             faculty[email] = { "name"   : clean_name(name)
-                              , "id"    : id
+                              , "id"    : str(id)
                               , "panel" : panel
                               , "unit"  : "x"*100
                               , "core"  : []
@@ -112,7 +120,6 @@ def get_faculty(db, unit_path, fields_path):
                 print(email, "not found")
 
     return faculty
-
 
 def fix_names(faculty, students):
     """
@@ -174,21 +181,22 @@ def fix_names(faculty, students):
                 fac.append(best[1])
                 continue
 
-            not_in.add(lf)
+            not_in.add((lf, stu))
 
         students[stu]["faculty"] = fac
 
     print("{:%} of names are accounted for".format(accounted_for/3/len(students)))
     print("{} names are not found:\n{}".format(len(not_in), not_in))
 
-
-def match(faculty, students):
+def match(faculty, students, interview=False):
     """
     Compares faculty and student fields of interest to compute a matching score
     Input: faculty and student dictionnaries
     Returns: Nothing
     """
     interest_score = 15
+    if interview:
+        interest_score = 100
     co_co_score = 10
     co_mi_score = 5
     mi_mi_score = 2
@@ -263,6 +271,32 @@ def connect():
     return db
 
 
+def stats(faculty, students):
+    # Number of mentions per faculty
+    fac = {}
+    for f in faculty:
+        fac_of_interest = 0
+        for stu in students:
+            if faculty[f]["name"] in students[stu]["faculty"]:
+                fac_of_interest += 1
+
+        fac[faculty[f]["name"]] = fac_of_interest
+
+    print("Number of mentions per faculty")
+    for f in sorted(fac, reverse=True, key=lambda f: fac[f]):
+        print(f, fac[f])
+
+    mean = sum(fac.values())/len(fac)
+    std = math.sqrt(sum([ (mean - m)**2 for m in fac.values() ])/len(fac))
+    print("Mean number of mentions per faculty: {}".format(mean))
+    print("Standard deviation: {}".format(std))
+
+    print("Number of faculty mentionned: {}".format(len(fac)))
+
+
+
+
+
 if __name__ == "__main__":
     db = connect()
     # Faculty information
@@ -274,6 +308,8 @@ if __name__ == "__main__":
     # Compute matching scores
     match(faculty, students)
     # Export scores to database
-    export(db, students)
+#    export(db, students)
     # Closes connection
     db.close()
+    # Shows stats
+    stats(faculty, students)
