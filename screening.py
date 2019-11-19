@@ -319,7 +319,7 @@ if __name__ == "__main__":
     # Compute matching scores
     match(faculty, students)
     # Export scores to database
-    export(db, students)
+#    export(db, students)
     # Closes connection
     db.close()
     # Shows stats
