@@ -7,12 +7,20 @@ faculty_sql = """
 SELECT userid, username, email, usergroup
 FROM logon
 WHERE (class = 1 -- Faculty
-OR userlevel = 2) -- Dean
+OR userlevel = 1) -- Dean
 AND email IS NOT NULL
 """
 
+faculty_fields_sql = """
+SELECT faculty_id, fields_id, importance FROM faculty_fields
+"""
+
+fields_sql = """
+SELECT id, field from fields
+"""
+
 applicants_sql = """
--- in selection_2019
+-- in selection_2020
 SELECT a.family_n, a.given_n,
        a.user_id,
        a.fields,
@@ -23,8 +31,8 @@ SELECT a.family_n, a.given_n,
        e.comment -- comment from committee
 FROM applicant a
 JOIN eval_master e ON e.user_id=a.user_id
-WHERE e.batch = 2 -- batch number
-AND e.rubbish = 2 -- pre-selected candidates
+WHERE e.batch = 1 -- batch number
+-- AND e.rubbish = 2 -- pre-selected candidates
 """
 
 
@@ -43,25 +51,41 @@ def clean_name(name):
     n =  "".join([c for c in n if c.isalpha()])
     return n
 
-def get_students(db, applicants_sql):
+def get_fields(db, fields_sql):
+    """
+    Calls the database and gets fields information.
+    Input: database connection object, SQL query
+    Returns: dictionary of student information, key=field name
+    """
+    fields = {}
+
+    with db.cursor() as cursor:
+        cursor.execute(fields_sql)
+        for id, name in cursor.fetchall():
+            fields[name] = id
+
+    return fields
+
+def get_students(db, applicants_sql, fields):
     """
     Calls the database and gets student information.
-    Input: database connection object
+    Input: database connection object, SQL query, dict of fields name/ID
     Returns: dictionary of student information, key=student ID
     """
     students = {}
 
     with db.cursor() as cursor:
         cursor.execute(applicants_sql)
-        for last, first, name, fields, l1, f1, l2, f2, l3, f3, panel, comment \
+        for last, first, name, minor, l1, f1, l2, f2, l3, f3, panel, comment \
                    in cursor.fetchall():
             faculty = [[l1, f1], [l2, f2], [l3, f3]]
+            minor = [fields[f] for f in minor.split('/')[:-1]]
 
             students[name] = { "name"    : last + " " + first
                              , "panel"   : panel
                              , "faculty" : faculty
                              , "core"    : []
-                             , "minor"   : fields.split('/')[:-1]
+                             , "minor"   : minor
                              , "match"   : []
                              , "comment" : comment
                              }
@@ -71,53 +95,40 @@ def get_faculty(db, unit_path, fields_path):
     """
     Calls the database and files to get faculty information.
     Input: database connection object, paths to files with units names and fields
-    Returns: dictionary of faculty information, key=faculty email
+    Returns: dictionary of faculty information, key=faculty ID
     """
     faculty = {}
+    email_to_id = {}
 
     with db.cursor() as cursor:
         cursor.execute(faculty_sql)
         for id, name, email, panel in cursor.fetchall():
-            faculty[email] = { "name"   : clean_name(name)
-                              , "id"    : str(id)
-                              , "panel" : panel
-                              , "unit"  : "x"*100
-                              , "core"  : []
-                              , "minor" : []
-                              , "match" : []
-                              , "avail" : 8
-                              }
+            faculty[str(id)] = \
+                  { "name"  : clean_name(name)
+                  , "email" : email
+                  , "id"    : str(id)
+                  , "panel" : panel
+                  , "unit"  : "x"*100
+                  , "core"  : []
+                  , "minor" : []
+                  , "match" : []
+                  , "avail" : 8
+                  }
+            email_to_id[email.lower()] = str(id)
 
     with open(unit_path) as csvfile:
         reader = csv.reader(csvfile)
         for email, unit in reader:
-            if email in faculty:
-                faculty[email]["unit"] = clean_name(unit)
+            email = email.lower()
+            if email_to_id.get(email,-1) in faculty:
+                faculty[email_to_id[email]]["unit"] = clean_name(unit)
             else:
                 print("Email for Unit not found:", email, unit)
 
-    with open(fields_path) as csvfile:
-        reader = csv.reader(csvfile)
-
-        header = reader.__next__()
-        fields = [ field[20:-1] for field in header[10:]] # Extracting fields
-        fields = [ "".join([c for c in x if c not in " -(),"]) for x in fields] # filtering characters
-        fields = [ x[:30] for x in fields] # 30 character cutoff
-
-        for row in reader:
-            email, name = row[1:3]
-
-            core_index = [ check == "Core (3 or 4)" for check in row[10:]]
-            core = [ field for (check, field) in zip(core_index, fields) if check]
-
-            minor_index = [ check == "Minor (as many as applicable)" for check in row[10:]]
-            minor = [ field for (check, field) in zip(minor_index, fields) if check]
-
-            if email in faculty:
-                faculty[email]["core"] = core
-                faculty[email]["minor"] = minor
-            else:
-                print(email, "not found")
+    with db.cursor() as cursor:
+        cursor.execute(faculty_fields_sql)
+        for fac, field, importance in cursor.fetchall():
+            faculty[str(fac)][importance].append(field)
 
     return faculty
 
@@ -267,7 +278,7 @@ def connect():
     db = pymysql.connect(host   = "aad.oist.jp",    # your host, usually localhost
                          user   = user,             # your username
                          passwd = password,         # your password
-                         db     = "selection_2019") # name of the database
+                         db     = "selection_2020") # name of the database
     return db
 
 
@@ -295,20 +306,20 @@ def stats(faculty, students):
 
 
 
-
-
 if __name__ == "__main__":
     db = connect()
+    # Fields information
+    fields = get_fields(db, fields_sql)
     # Faculty information
     faculty = get_faculty(db, "input/units.csv", "input/faculty_fields.csv")
     # Student information
-    students = get_students(db, applicants_sql)
+    students = get_students(db, applicants_sql, fields)
     # Data cleanup
     fix_names(faculty, students)
     # Compute matching scores
     match(faculty, students)
     # Export scores to database
-#    export(db, students)
+    export(db, students)
     # Closes connection
     db.close()
     # Shows stats
