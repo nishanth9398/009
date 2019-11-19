@@ -32,7 +32,7 @@ def get_faculty(db, fields_path):
     with db.cursor() as cursor:
         cursor.execute(faculty_sql)
         for id, email in cursor.fetchall():
-            faculty[email] = { "id"    : str(id)
+            faculty[email.lower()] = { "id"    : str(id)
                               , "core"  : []
                               , "minor" : []
                               }
@@ -41,23 +41,23 @@ def get_faculty(db, fields_path):
         reader = csv.reader(csvfile)
 
         header = reader.__next__()
-        fields = list(map(clean_field_name, header[10:]))
+        fields = list(map(clean_field_name, header[3:]))
 
 
         for row in reader:
-            email, name = row[1:3]
+            name, email = row[1:3]
 
-            core_index = [ check == "Core (3 or 4)" for check in row[10:]]
+            core_index = [ check == "Core (3 or 4)" for check in row[3:]]
             core = [ field for (check, field) in zip(core_index, fields) if check]
 
-            minor_index = [ check == "Minor (as many as applicable)" for check in row[10:]]
+            minor_index = [ check == "Minor (as many as applicable)" for check in row[3:]]
             minor = [ field for (check, field) in zip(minor_index, fields) if check]
 
-            if email in faculty:
+            if email.lower() in faculty:
                 faculty[email]["core"] = core
                 faculty[email]["minor"] = minor
             else:
-                print(email, "not found")
+                print(email.lower(), "not found")
 
     return (fields, faculty)
 
@@ -137,7 +137,7 @@ def connect():
     db = pymysql.connect(host   = "aad.oist.jp",    # your host, usually localhost
                          user   = user,             # your username
                          passwd = password,         # your password
-                         db     = "selection_2019") # name of the database
+                         db     = "selection_2020") # name of the database
     return db
 
 
@@ -145,7 +145,7 @@ def connect():
 if __name__ == "__main__":
     db = connect()
     # Faculty information
-    all_fields, faculty = get_faculty(db, "input/faculty_fields.csv")
+    all_fields, faculty = get_faculty(db, "input/faculty_fields_2020.csv")
     fields = get_fields(db)
     # Export fields to database
     fields = export_fields(db, all_fields, fields)
