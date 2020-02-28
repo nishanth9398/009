@@ -3,15 +3,23 @@ import editdistance
 import pymysql
 import math
 
+weights = { "core core": 10
+          , "core minor": 5
+          , "minor minor": 2
+          , "interest": 15
+          }
+
+year = 2020
+batch = 1
+
 faculty_sql = """
-SELECT userid, username, email, usergroup
+SELECT userid, username, email
 FROM logon
 WHERE ((class = 1 -- Faculty
 OR userid = 52) -- Ulf, special because Dean
 AND email IS NOT NULL)
 -- OR userid = 801 -- Hibino-san
 """
-
 
 faculty_fields_sql = """
 SELECT faculty_id, fields_id, importance FROM faculty_fields
@@ -21,7 +29,7 @@ fields_sql = """
 SELECT id, field from fields
 """
 
-applicants_sql = """
+applicants_sql = f"""
 -- in selection_2020
 SELECT a.family_n, a.given_n,
        a.user_id,
@@ -29,16 +37,12 @@ SELECT a.family_n, a.given_n,
        a.faculty_last1, a.faculty_first1,
        a.faculty_last2, a.faculty_first2,
        a.faculty_last3, a.faculty_first3,
-       e.group, -- panel
        e.comment -- comment from committee
 FROM applicant a
 JOIN eval_master e ON e.user_id=a.user_id
-WHERE e.batch = 1 -- batch number
--- AND e.rubbish != 1 -- pre-selected candidates
+WHERE e.batch = {batch} -- batch number
 -- AND e.rubbish != 1 -- pre-selected candidates
 """
-
-
 
 def clean_name(name):
     """
@@ -79,13 +83,12 @@ def get_students(db, applicants_sql, fields):
 
     with db.cursor() as cursor:
         cursor.execute(applicants_sql)
-        for last, first, name, minor, l1, f1, l2, f2, l3, f3, panel, comment \
+        for last, first, name, minor, l1, f1, l2, f2, l3, f3, comment \
                    in cursor.fetchall():
             faculty = [[l1, f1], [l2, f2], [l3, f3]]
             minor = [fields[f] for f in minor.split('/')[:-1]]
 
             students[name] = { "name"    : last + " " + first
-                             , "panel"   : panel
                              , "faculty" : faculty
                              , "core"    : []
                              , "minor"   : minor
@@ -105,12 +108,11 @@ def get_faculty(db, unit_path):
 
     with db.cursor() as cursor:
         cursor.execute(faculty_sql)
-        for id, name, email, panel in cursor.fetchall():
+        for id, name, email in cursor.fetchall():
             faculty[str(id)] = \
                   { "name"  : clean_name(name)
                   , "email" : email
                   , "id"    : str(id)
-                  , "panel" : panel
                   , "unit"  : "x"*100
                   , "core"  : []
                   , "minor" : []
@@ -204,19 +206,16 @@ def fix_names(faculty, students):
     print("{:%} of names are accounted for".format(accounted_for/3/len(students)))
     print("{} names are not found:\n{}".format(len(not_in), not_in))
 
-def match(faculty, students, interview=False):
+def match(faculty, students, weights):
     """
     Compares faculty and student fields of interest to compute a matching score
     Input: faculty and student dictionnaries
     Returns: Nothing
     """
-    interest_score = 15
-    if interview:
-        interest_score = 100
-    co_co_score = 10
-    co_mi_score = 5
-    mi_mi_score = 2
-    panel_score = 1
+    co_co_score = weights["core core"]
+    co_mi_score = weights["core minor"]
+    mi_mi_score = weights["minor minor"]
+    interest_score = weights["interest"]
 
     for stu in students:
         for fac in faculty:
@@ -231,16 +230,13 @@ def match(faculty, students, interview=False):
             if faculty[fac]["name"] in students[stu]["faculty"]:
                 score += interest_score
 
-            if faculty[fac]["panel"] == students[stu]["panel"]:
-                score += panel_score
-
             students[stu]["match"].append((score, faculty[fac]["id"]))
             faculty[fac]["match"].append((score, stu))
 
-        students[stu]["match"].sort(key = lambda x : -x[0])
+        students[stu]["match"].sort(reverse = True)
 
     for fac in faculty:
-        faculty[fac]["match"].sort(key = lambda x : -x[0])
+        faculty[fac]["match"].sort(reverse = True)
 
 def confirm():
     """
@@ -283,7 +279,7 @@ def connect():
     db = pymysql.connect(host   = "aad.oist.jp",    # your host, usually localhost
                          user   = user,             # your username
                          passwd = password,         # your password
-                         db     = "selection_2020") # name of the database
+                         db     = f"selection_{year}") # name of the database
     return db
 
 
@@ -310,7 +306,6 @@ def stats(faculty, students):
     print("Number of faculty mentionned: {}".format(len(fac)))
 
 
-
 if __name__ == "__main__":
     db = connect()
     # Fields information
@@ -322,7 +317,7 @@ if __name__ == "__main__":
     # Data cleanup
     fix_names(faculty, students)
     # Compute matching scores
-    match(faculty, students)
+    match(faculty, students, weights)
     # Export scores to database
     # export(db, students)
     # Closes connection
