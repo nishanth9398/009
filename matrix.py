@@ -5,9 +5,11 @@ import csv
 from collections import Counter
 
 interview_number = 4
+batch_number = 1
+max_faculty_interview = 7
 
-positive_sql = """
--- in selection_2019
+aws_students_sql = """
+-- in selection_2019+
 SELECT a.family_n, a.given_n,
        a.user_id,
        a.fields,
@@ -17,9 +19,13 @@ SELECT a.family_n, a.given_n,
        e.group, -- panel
        e.comment -- comment from committee
 FROM applicant a
-JOIN eval_master e ON e.user_id=a.user_id
-WHERE e.batch = 2 -- batch number
-      AND e.status = 1 -- positive status
+JOIN eval_master2 e ON e.user_id=a.user_id
+"""
+
+matrix_students_sql = """
+-- in matrix
+SELECT embark_id
+FROM student
 """
 
 faculty_avail = """
@@ -31,22 +37,26 @@ GROUP BY faculty_id
 """
 
 wants_interview = """
--- in selection_2019
-SELECT user_id, email
+-- in selection_2019+
+SELECT user_id, userid
 FROM eval_detail e
 JOIN logon l on e.id_examiner = l.userid
 WHERE interview = "yes";
 """
 
 said_no = """
--- in selection_2019
+-- in selection_2019+
 SELECT user_id, email
 FROM eval_detail e
 JOIN logon l on e.id_examiner = l.userid
 WHERE invite = 1 -- 1: No, 2: Maybe, 3: Invite;
 """
 
-student_avail = "select embark_id from student"
+# matches_sql = """
+# -- in selection_2020
+# SELECT user_id, faculty_id, closeness
+# FROM field_matrix
+# """
 
 def defered_students(students, path):
     stu = {}
@@ -73,6 +83,10 @@ def show_comments(students):
             print("Student {} {}: {}".format(stu, faculty, comment))
 
 def add_availability(faculty, students):
+    """
+    Adds availability from faculty
+    Removes students not in matrix (deferred or cancelled students)
+    """
     with open("password.txt") as f: # "password.txt" is not shared on GitHub
         [user, password] = f.read().split()
 
@@ -81,20 +95,19 @@ def add_availability(faculty, students):
                          passwd = password,         # your password
                          db     = "matrix")         # name of the database
 
+    for f in faculty:
+        faculty[f]['avail'] = max_faculty_interview
+
     with db.cursor() as cursor:
         cursor.execute(faculty_avail)
         for id, email, avail in cursor.fetchall():
-            # Fix for Luscombe email mistmatch
-            if email == "luscombe@oist.jp":
-                email = "nicholas.luscombe@oist.jp"
-
-            if email in faculty:
-                faculty[email]["avail"] = min(8, avail) # Maximum number of interviews
+            if id in faculty:
+                faculty[id]["avail"] = min(max_faculty_interview, avail)
             else:
                 print("Faculty not found", email)
 
     with db.cursor() as cursor:
-        cursor.execute(student_avail)
+        cursor.execute(matrix_students_sql)
         stu_avail = [s[0] for s in cursor.fetchall()]
 
     fac2 = {f:faculty[f] for f in faculty if faculty[f]["avail"] > 0}
@@ -107,9 +120,8 @@ def requested_interviews(db, faculty, students):
 
     with db.cursor() as cursor:
         cursor.execute(wants_interview)
-        for stu, fac_email in cursor.fetchall():
-            if stu in students and fac_email in faculty:
-                fac_id = faculty[fac_email]["id"]
+        for stu, fac_id in cursor.fetchall():
+            if stu in students and fac_id in faculty:
                 matches = students[stu]["match"]
                 matches = [(score, fac) for (score, fac) in matches if fac != fac_id]
                 matches = [(faculty_invite, fac_id)] + matches
@@ -125,7 +137,6 @@ def rejected_students(db, faculty, students):
             if stu in students and fac_email in faculty:
                 rejections[stu] = rejections.get(stu, []) + [faculty[fac_email]["id"]]
     return rejections
-
 
 def make_matrix(faculty, students, forced, rejected):
     matrix = { stu : [] for stu in students }
@@ -161,16 +172,16 @@ def make_matrix(faculty, students, forced, rejected):
     return matrix
 
 def matrix_analysis(matrix, faculty, students):
-    fac_names = {}
-    for f in faculty:
-        fac_names[faculty[f]["id"]] = faculty[f]["name"]
+    # fac_names = {}
+    # for f in faculty:
+    #     fac_names[faculty[f]["id"]] = faculty[f]["name"]
 
     print()
     av = 0
     for stu in matrix:
         s = [score for score, _ in matrix[stu]]
         if any([score < 5 for score in s]):
-            intervs = [(sc, fac_names[f]) for sc, f in matrix[stu]]
+            intervs = [(sc, faculty[f]["name"]) for sc, f in matrix[stu]]
             print("Student ", students[stu]["name"], " has some low interview scores ", intervs)
         av += sum(s)
     av /= interview_number * len(matrix)
@@ -191,14 +202,13 @@ def matrix_analysis(matrix, faculty, students):
     ints = 0
     print("Faculty with less than 5 interviews:")
     for f in faculty:
-        if faculty[f]["id"] not in fac:
-            print(f, "has no interviews")
+        if f not in fac:
+            print(faculty[f]["name"], "has no interviews")
         else:
-            f = faculty[f]["id"]
             av += sum([score for score, _ in fac[f]])/len(fac[f])
             ints += len(fac[f])
             if len(fac[f]) < 5 :
-                print(fac_names[f], "has", len(fac[f]), "interviews")
+                print(faculty[f]["name"], "has", len(fac[f]), "interviews")
     av /= len(fac)
     ints /= len(fac)
     print()
@@ -261,17 +271,23 @@ def export_human(path, faculty, students, matrix):
 if __name__ == "__main__":
     db = m.connect()
     # Faculty information
-    faculty = m.get_faculty(db, "input/units.csv", "input/faculty_fields.csv")
+    faculty = m.get_faculty(db, "input/units.csv")
     # Hard fixes
-    del faculty["robert.baughman@oist.jp"]
-    del faculty ["daniel.rokhsar@oist.jp"] # Adjunct, not here
-    del faculty["yutaka.yoshida@oist.jp"] # Adjunct, not here yet?
+    del faculty["1"] # robertbaughman
+    del faculty["23"] # mukhlessowwan
+    del faculty["26"] # Stephens
+    del faculty["29"] # Mikheyev
+    del faculty["64"] # danielrokhsar
+    del faculty["72"] # anastasiiatsvietkova
+    del faculty["83"] # milindpurohit
+    del faculty["76"] # Pauly
+    faculty["101"] = faculty["833"] # Wrong id?
+    del faculty["833"] # xiaodanzhou
 
-    faculty["jnthnmllr@oist.jp"]["id"] = "10"
-    faculty["hiroshi.watanabe@oist.jp"]["id"] = "64"
-    faculty["akihiro.kusumi@oist.jp"]["id"] = "65"
+    # Fields information
+    fields = m.get_fields(db, m.fields_sql)
     # Student information
-    students = m.get_students(db, positive_sql)
+    students = m.get_students(db, aws_students_sql, fields)
     # Student from last year
     defered_students(students, "input/defered.csv")
     # Data cleanup
@@ -281,7 +297,7 @@ if __name__ == "__main__":
     # Show comments
     show_comments(students)
     # Manually adding faculty of interest
-    students['75218934']["faculty"].append("keikokono")
+    # students['75218934']["faculty"].append("keikokono")
     # Compute matching scores
     m.match(faculty, students, interview=True)
     # Special case for Yanagida sensei => Zhang HaoLing
@@ -298,5 +314,5 @@ if __name__ == "__main__":
     # Analyze stats
     matrix_analysis(matrix, faculty, students)
     # Export data
-    export_matrix("output/IM_Jun19.csv", faculty, matrix)
+    export_matrix("output/IM_Feb20.csv", faculty, matrix)
     export_human("output/matrix_human.csv", faculty, students, matrix)

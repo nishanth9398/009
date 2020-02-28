@@ -6,10 +6,12 @@ import math
 faculty_sql = """
 SELECT userid, username, email, usergroup
 FROM logon
-WHERE (class = 1 -- Faculty
-OR userlevel = 1) -- Dean
-AND email IS NOT NULL
+WHERE ((class = 1 -- Faculty
+OR userid = 52) -- Ulf, special because Dean
+AND email IS NOT NULL)
+-- OR userid = 801 -- Hibino-san
 """
+
 
 faculty_fields_sql = """
 SELECT faculty_id, fields_id, importance FROM faculty_fields
@@ -32,7 +34,8 @@ SELECT a.family_n, a.given_n,
 FROM applicant a
 JOIN eval_master e ON e.user_id=a.user_id
 WHERE e.batch = 1 -- batch number
--- AND e.rubbish = 2 -- pre-selected candidates
+-- AND e.rubbish != 1 -- pre-selected candidates
+-- AND e.rubbish != 1 -- pre-selected candidates
 """
 
 
@@ -91,7 +94,7 @@ def get_students(db, applicants_sql, fields):
                              }
     return students
 
-def get_faculty(db, unit_path, fields_path):
+def get_faculty(db, unit_path):
     """
     Calls the database and files to get faculty information.
     Input: database connection object, paths to files with units names and fields
@@ -112,7 +115,6 @@ def get_faculty(db, unit_path, fields_path):
                   , "core"  : []
                   , "minor" : []
                   , "match" : []
-                  , "avail" : 8
                   }
             email_to_id[email.lower()] = str(id)
 
@@ -128,7 +130,10 @@ def get_faculty(db, unit_path, fields_path):
     with db.cursor() as cursor:
         cursor.execute(faculty_fields_sql)
         for fac, field, importance in cursor.fetchall():
-            faculty[str(fac)][importance].append(field)
+            if str(fac) in faculty:
+                faculty[str(fac)][importance].append(field)
+            else:
+                print("Faculty", fac, "not found.")
 
     return faculty
 
@@ -311,7 +316,7 @@ if __name__ == "__main__":
     # Fields information
     fields = get_fields(db, fields_sql)
     # Faculty information
-    faculty = get_faculty(db, "input/units.csv", "input/faculty_fields.csv")
+    faculty = get_faculty(db, "input/units.csv")
     # Student information
     students = get_students(db, applicants_sql, fields)
     # Data cleanup
@@ -319,7 +324,7 @@ if __name__ == "__main__":
     # Compute matching scores
     match(faculty, students)
     # Export scores to database
-#    export(db, students)
+    # export(db, students)
     # Closes connection
     db.close()
     # Shows stats

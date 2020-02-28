@@ -54,8 +54,8 @@ def get_faculty(db, fields_path):
             minor = [ field for (check, field) in zip(minor_index, fields) if check]
 
             if email.lower() in faculty:
-                faculty[email]["core"] = core
-                faculty[email]["minor"] = minor
+                faculty[email.lower()]["core"] = core
+                faculty[email.lower()]["minor"] = minor
             else:
                 print(email.lower(), "not found")
 
@@ -93,10 +93,12 @@ def export_fields(db, all_fields, fields):
     Input: database connection object, faculty dictionnary
     Returns: Nothing
     """
+    values = ", ".join([ f"(\"{f}\")" for f in all_fields if f not in fields])
+    print("Fields to be updated: ", values)
+
     if not confirm():
         return
 
-    values = ", ".join([ f"(\"{f}\")" for f in all_fields if f not in fields])
 
     if values:
         with db.cursor() as cursor:
@@ -110,6 +112,9 @@ def export_fac_fields(db, faculty, fields):
     Input: database connection object, faculty dictionnary
     Returns: Nothing
     """
+    to_be_updated = [faculty[f] for f in faculty if faculty[f]['core'] + faculty[f]['minor']]
+    print("Faculty fields to be updated: ", to_be_updated)
+
     if not confirm():
         return
 
@@ -145,7 +150,7 @@ def connect():
 if __name__ == "__main__":
     db = connect()
     # Faculty information
-    all_fields, faculty = get_faculty(db, "input/faculty_fields_2020.csv")
+    all_fields, faculty = get_faculty(db, "input/faculty_fields.csv")
     fields = get_fields(db)
     # Export fields to database
     fields = export_fields(db, all_fields, fields)
