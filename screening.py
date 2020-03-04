@@ -2,6 +2,7 @@ import csv
 import editdistance
 import pymysql
 import math
+import toml
 
 weights = { "core core": 10
           , "core minor": 5
@@ -92,7 +93,7 @@ def get_students(db, applicants_sql, fields):
                              , "faculty" : faculty
                              , "core"    : []
                              , "minor"   : minor
-                             , "match"   : []
+                             , "match"   : {}
                              , "comment" : comment
                              }
     return students
@@ -111,7 +112,7 @@ def get_faculty(db, unit_path):
         for id, name, email in cursor.fetchall():
             faculty[str(id)] = \
                   { "name"  : clean_name(name)
-                  , "email" : email
+                  , "email" : email.strip().lower()
                   , "id"    : str(id)
                   , "unit"  : "x"*100
                   , "core"  : []
@@ -230,10 +231,8 @@ def match(faculty, students, weights):
             if faculty[fac]["name"] in students[stu]["faculty"]:
                 score += interest_score
 
-            students[stu]["match"].append((score, faculty[fac]["id"]))
+            students[stu]["match"][fac] = score
             faculty[fac]["match"].append((score, stu))
-
-        students[stu]["match"].sort(reverse = True)
 
     for fac in faculty:
         faculty[fac]["match"].sort(reverse = True)
@@ -261,7 +260,10 @@ def export(db, students):
             cursor.execute(query)
             for stu in students:
                 query = "INSERT INTO field_matrix (user_id, faculty_id, closeness) VALUES {} ;"
-                values = ["({}, {}, {})".format(stu, fac, score) for score, fac in students[stu]["match"]]
+                values = []
+                for fac in students[stu]["match"]:
+                    score = students[stu]["match"][fac]
+                    values.append(f"({stu}, {fac}, {score})")
                 cursor.execute(query.format(", ".join(values)))
         db.commit()
 
@@ -272,14 +274,12 @@ def get_match_distribution(faculty):
             dist[score] += 1
     return dist
 
-def connect():
+def connect(login, database):
     # Connect to database
-    with open("password.txt") as f: # "password.txt" is not shared on GitHub
-        [user, password] = f.read().split()
-    db = pymysql.connect(host   = "aad.oist.jp",    # your host, usually localhost
-                         user   = user,             # your username
-                         passwd = password,         # your password
-                         db     = f"selection_{year}") # name of the database
+    db = pymysql.connect(host = login["aad"]["host"],
+                         user = login["aad"]["username"],
+                         passwd = login["aad"]["password"],
+                         db = database)
     return db
 
 
@@ -307,7 +307,8 @@ def stats(faculty, students):
 
 
 if __name__ == "__main__":
-    db = connect()
+    login = toml.load("login.toml")
+    db = connect(login, f"selection_{year}")
     # Fields information
     fields = get_fields(db, fields_sql)
     # Faculty information

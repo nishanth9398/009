@@ -1,6 +1,6 @@
 input/*
 output/*
-password.txt
+login.toml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
