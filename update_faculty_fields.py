@@ -1,5 +1,8 @@
 import csv
 import pymysql
+import toml
+
+year = "2020b"
 
 faculty_sql = """
 SELECT userid, email
@@ -135,20 +138,19 @@ def export_fac_fields(db, faculty, fields):
         db.commit()
 
 
-def connect():
+def connect(login):
     # Connect to database
-    with open("password.txt") as f: # "password.txt" is not shared on GitHub
-        [user, password] = f.read().split()
-    db = pymysql.connect(host   = "aad.oist.jp",    # your host, usually localhost
-                         user   = user,             # your username
-                         passwd = password,         # your password
-                         db     = "selection_2020") # name of the database
+    db = pymysql.connect(host = login["aad"]["host"],
+                         user = login["aad"]["username"],
+                         passwd = login["aad"]["password"],
+                         db     = f"selection_{year}") # name of the database
     return db
 
 
 
 if __name__ == "__main__":
-    db = connect()
+    login = toml.load("login.toml")
+    db = connect(login)
     # Faculty information
     all_fields, faculty = get_faculty(db, "input/faculty_fields.csv")
     fields = get_fields(db)
