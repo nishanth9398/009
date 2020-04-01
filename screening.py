@@ -10,11 +10,11 @@ weights = { "core core": 10
           , "interest": 15
           }
 
-year = 2020
-batch = 1
+year = "2020b"
+batch = 2
 
 faculty_sql = """
-SELECT userid, username, email
+SELECT userid, sdbid, username, email
 FROM logon
 WHERE ((class = 1 -- Faculty
 OR userid = 52) -- Ulf, special because Dean
@@ -31,13 +31,11 @@ SELECT id, field from fields
 """
 
 applicants_sql = f"""
--- in selection_2020
+-- in selection_2020b
 SELECT a.family_n, a.given_n,
        a.user_id,
-       a.fields,
-       a.faculty_last1, a.faculty_first1,
-       a.faculty_last2, a.faculty_first2,
-       a.faculty_last3, a.faculty_first3,
+       a.fi_core, a.fi_sub,
+       a.faculty1_id, a.faculty2_id, a.faculty3_id,
        e.comment -- comment from committee
 FROM applicant a
 JOIN eval_master e ON e.user_id=a.user_id
@@ -45,19 +43,10 @@ WHERE e.batch = {batch} -- batch number
 -- AND e.rubbish != 1 -- pre-selected candidates
 """
 
-def clean_name(name):
-    """
-    Clean up names for comparaisons.
-    Gets rid of punctuation, spaces, casing and more.
-    Input: string
-    Returns: string
-    """
-    n = name.lower()
-    n = n.replace("prof", "")
-    n = n.replace("í", "i") # For Sile
-    n = n.replace("eileen", "") # For Gail
-    n =  "".join([c for c in n if c.isalpha()])
-    return n
+def clean_field_name(field):
+    field = "".join([c for c in field if c not in " -(),"])
+    field = field[:30]
+    return field
 
 def get_fields(db, fields_sql):
     """
@@ -84,52 +73,58 @@ def get_students(db, applicants_sql, fields):
 
     with db.cursor() as cursor:
         cursor.execute(applicants_sql)
-        for last, first, name, minor, l1, f1, l2, f2, l3, f3, comment \
+        for last, first, id, core, minor, f1, f2, f3, comment \
                    in cursor.fetchall():
-            faculty = [[l1, f1], [l2, f2], [l3, f3]]
-            minor = [fields[f] for f in minor.split('/')[:-1]]
+            faculty = [f1, f2, f3]
+            cores = []
+            for f in core.split(","):
+                f = clean_field_name(f.strip())
+                if not f: continue
+                if f in fields:
+                    cores.append(fields[f])
+                else:
+                    print(f"Fields not found: {f}")
 
-            students[name] = { "name"    : last + " " + first
-                             , "faculty" : faculty
-                             , "core"    : []
-                             , "minor"   : minor
-                             , "match"   : {}
-                             , "comment" : comment
-                             }
+            minors = []
+            for f in minor.split(","):
+                f = clean_field_name(f.strip())
+                if not f: continue
+                if f in fields:
+                    minors.append(fields[f])
+                else:
+                    print(f"Fields not found: {f}")
+
+            students[id] = { "name"    : f"{last} {first}"
+                           , "faculty" : faculty
+                           , "core"    : cores
+                           , "minor"   : minors
+                           , "match"   : {}
+                           , "comment" : comment
+                           }
     return students
 
-def get_faculty(db, unit_path):
+def get_faculty(db):
     """
     Calls the database and files to get faculty information.
     Input: database connection object, paths to files with units names and fields
     Returns: dictionary of faculty information, key=faculty ID
     """
     faculty = {}
-    email_to_id = {}
 
     with db.cursor() as cursor:
         cursor.execute(faculty_sql)
-        for id, name, email in cursor.fetchall():
+        for id, sdbid, name, email in cursor.fetchall():
             faculty[str(id)] = \
-                  { "name"  : clean_name(name)
+                  { "name"  : name.strip()
+                  , "logon ID" : str(id)
+                  , "SDB ID" : str(sdbid)
                   , "email" : email.strip().lower()
-                  , "id"    : str(id)
-                  , "unit"  : "x"*100
                   , "core"  : []
                   , "minor" : []
                   , "match" : []
                   }
-            email_to_id[email.lower()] = str(id)
 
-    with open(unit_path) as csvfile:
-        reader = csv.reader(csvfile)
-        for email, unit in reader:
-            email = email.lower()
-            if email_to_id.get(email,-1) in faculty:
-                faculty[email_to_id[email]]["unit"] = clean_name(unit)
-            else:
-                print("Email for Unit not found:", email, unit)
-
+    # Get faculty fields
     with db.cursor() as cursor:
         cursor.execute(faculty_fields_sql)
         for fac, field, importance in cursor.fetchall():
@@ -138,74 +133,9 @@ def get_faculty(db, unit_path):
             else:
                 print("Faculty", fac, "not found.")
 
+    # Changing the id to the student database ID
+    faculty = { faculty[id]["SDB ID"]:faculty[id]  for id in faculty}
     return faculty
-
-def fix_names(faculty, students):
-    """
-    Matches and updates students' faculty of interest (free input field) to faculty
-    Input: faculty and student dictionnaries
-    Returns: Nothing
-    """
-    real = [faculty[fac]["name"] for fac in faculty]
-    accounted_for = 0
-    not_in = set()
-    cont = False
-
-    for stu in students:
-        fac = []
-        for last, first in students[stu]["faculty"]:
-            lf = clean_name(last + first)
-            fl = clean_name(first + last)
-
-            if lf == "":
-                accounted_for += 1
-                continue
-
-            if lf in real:
-                fac.append(lf)
-                accounted_for += 1
-                continue
-
-            if fl in real:
-                fac.append(fl)
-                accounted_for += 1
-                continue
-
-            for name in real:
-                if (name in fl) or (name in lf):
-                    fac.append(name)
-                    accounted_for += 1
-                    cont = True
-                    break
-            if cont:
-                cont = False
-                continue
-
-            dist_lf = [(editdistance.eval(lf, name), name) for name in real]
-            dist_fl = [(editdistance.eval(fl, name), name) for name in real]
-            best = min(dist_fl + dist_lf)
-            if best[0] < 5:
-                accounted_for += 1
-                fac.append(best[1])
-                continue
-                # if best[0] == 4:
-                #     print(lf, best)
-
-            dist_lf = [(editdistance.eval(lf, faculty[f]["unit"]), faculty[f]["name"]) for f in faculty]
-            dist_fl = [(editdistance.eval(fl, faculty[f]["unit"]), faculty[f]["name"]) for f in faculty]
-            best = min(dist_fl + dist_lf)
-            if best[0] < 3/10*len(fl):
-                # print(lf, best)
-                accounted_for += 1
-                fac.append(best[1])
-                continue
-
-            not_in.add((lf, stu))
-
-        students[stu]["faculty"] = fac
-
-    print("{:%} of names are accounted for".format(accounted_for/3/len(students)))
-    print("{} names are not found:\n{}".format(len(not_in), not_in))
 
 def match(faculty, students, weights):
     """
@@ -228,7 +158,7 @@ def match(faculty, students, weights):
             score = co_co_score * co_co +  co_mi_score * co_mi \
                     + co_mi_score * mi_co + mi_mi_score * mi_mi
 
-            if faculty[fac]["name"] in students[stu]["faculty"]:
+            if faculty[fac]["SDB ID"] in students[stu]["faculty"]:
                 score += interest_score
 
             students[stu]["match"][fac] = score
@@ -248,7 +178,7 @@ def confirm():
         answer = input("Would you like to update the database? [Y/N]? ").lower()
     return answer == "y"
 
-def export(db, students):
+def export(db, faculty, students):
     """
     Rewrites the database table with the matching scores after manual confirm.
     Input: database connection object, student dictionnary
@@ -262,8 +192,9 @@ def export(db, students):
                 query = "INSERT INTO field_matrix (user_id, faculty_id, closeness) VALUES {} ;"
                 values = []
                 for fac in students[stu]["match"]:
+                    fac_id = faculty[fac]["logon ID"]
                     score = students[stu]["match"][fac]
-                    values.append(f"({stu}, {fac}, {score})")
+                    values.append(f"(\"{stu}\", \"{fac_id}\", {score})")
                 cursor.execute(query.format(", ".join(values)))
         db.commit()
 
@@ -272,7 +203,7 @@ def get_match_distribution(faculty):
     for fac in faculty:
         for score, _ in faculty[fac]["match"]:
             dist[score] += 1
-    return dist
+    return [(match, n) for match, n in enumerate(dist) if n]
 
 def connect(login, database):
     # Connect to database
@@ -289,7 +220,7 @@ def stats(faculty, students):
     for f in faculty:
         fac_of_interest = 0
         for stu in students:
-            if faculty[f]["name"] in students[stu]["faculty"]:
+            if f in students[stu]["faculty"]:
                 fac_of_interest += 1
 
         fac[faculty[f]["name"]] = fac_of_interest
@@ -303,7 +234,9 @@ def stats(faculty, students):
     print("Mean number of mentions per faculty: {}".format(mean))
     print("Standard deviation: {}".format(std))
 
-    print("Number of faculty mentionned: {}".format(len(fac)))
+    print("Number of faculty mentionned: {}".format(len([1 for f in fac if fac[f]])))
+
+    print(f"Matching score distribution (score, number): {get_match_distribution(faculty)}")
 
 
 if __name__ == "__main__":
@@ -312,15 +245,13 @@ if __name__ == "__main__":
     # Fields information
     fields = get_fields(db, fields_sql)
     # Faculty information
-    faculty = get_faculty(db, "input/units.csv")
+    faculty = get_faculty(db)
     # Student information
     students = get_students(db, applicants_sql, fields)
-    # Data cleanup
-    fix_names(faculty, students)
     # Compute matching scores
     match(faculty, students, weights)
     # Export scores to database
-    # export(db, students)
+    export(db, faculty, students)
     # Closes connection
     db.close()
     # Shows stats
