@@ -14,7 +14,7 @@ year = "2020b"
 batch = 2
 
 faculty_sql = """
-SELECT userid, sdbid, username, email
+SELECT userid, oistid, sdbid, username, email
 FROM logon
 WHERE ((class = 1 -- Faculty
 OR userid = 52) -- Ulf, special because Dean
@@ -113,11 +113,12 @@ def get_faculty(db):
 
     with db.cursor() as cursor:
         cursor.execute(faculty_sql)
-        for id, sdbid, name, email in cursor.fetchall():
+        for id, username, sdbid, name, email in cursor.fetchall():
             faculty[str(id)] = \
                   { "name"  : name.strip()
                   , "logon ID" : str(id)
                   , "SDB ID" : str(sdbid)
+                  , "username": username
                   , "email" : email.strip().lower()
                   , "core"  : []
                   , "minor" : []

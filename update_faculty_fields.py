@@ -107,6 +107,7 @@ def export_fields(db, all_fields, fields):
         with db.cursor() as cursor:
             query = f"INSERT INTO fields (field) VALUES {values};"
             cursor.execute(query)
+            print(query)
             db.commit()
 
 def export_fac_fields(db, faculty, fields):
@@ -135,14 +136,19 @@ def export_fac_fields(db, faculty, fields):
                 query = "INSERT INTO faculty_fields (faculty_id, fields_id, importance) VALUES {} ;"
                 values = ", ".join(core_val + minor_val)
                 cursor.execute(query.format(values))
+                print(query.format(values))
         db.commit()
 
 
 def connect(login):
     # Connect to database
-    db = pymysql.connect(host = login["aad"]["host"],
-                         user = login["aad"]["username"],
-                         passwd = login["aad"]["password"],
+    # db = pymysql.connect(host = login["aad"]["host"],
+    #                      user = login["aad"]["username"],
+    #                      passwd = login["aad"]["password"],
+    #                      db     = f"selection_{year}") # name of the database
+    db = pymysql.connect(host = "localhost",
+                         user ="root",
+                         passwd = "",
                          db     = f"selection_{year}") # name of the database
     return db
 
