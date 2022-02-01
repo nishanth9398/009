@@ -7,16 +7,13 @@ import toml
 weights = {"core core": 10, "core minor": 5, "minor minor": 2, "interest": 15
            }
 
-database = "selection_2022"
-batch = 1
+database = "ri2021apr"
 
 faculty_sql = """
-SELECT userid, oistid, sdbid, username, email
+SELECT userid, oistid, username
 FROM logon
-WHERE ((class = 1 -- Faculty
+WHERE (class = 1 -- Faculty
 OR userid = 52) -- Ulf, special because Dean
-AND email IS NOT NULL)
--- OR userid = 801 -- Hibino-san
 """
 
 faculty_fields_sql = """
@@ -29,15 +26,11 @@ SELECT id, full_name from fields
 
 applicants_sql = f"""
 -- in selection_2020b
-SELECT a.family_n, a.given_n,
+SELECT a.l_name, a.f_name,
        a.user_id,
        a.fi_core, a.fi_sub,
-       a.faculty1, a.faculty2, a.faculty3,
-       e.comment -- comment from committee
+       a.unit1, a.unit2, a.unit3
 FROM applicant a
-JOIN eval_master e ON e.user_id=a.user_id
-WHERE e.batch = {batch} -- batch number
--- AND e.rubbish != 1 -- pre-selected candidates
 """
 
 
@@ -62,6 +55,7 @@ def get_fields(db, fields_sql):
 
     return fields
 
+
 def get_students(db, applicants_sql, fields):
     """
     Calls the database and gets student information.
@@ -72,12 +66,11 @@ def get_students(db, applicants_sql, fields):
 
     with db.cursor() as cursor:
         cursor.execute(applicants_sql)
-        for last, first, id, core, minor, f1, f2, f3, comment \
-                in cursor.fetchall():
-            faculty = [f1, f2, f3]
+        for last, first, id, core, minor, f1, f2, f3 in cursor.fetchall():
+            faculty = [f for f in [f1, f2, f3] if f]
             cores = []
             for f in core.split("/"):
-                # f = clean_field_name(f.strip())
+                f = f.strip()
                 if not f:
                     continue
                 if f in fields:
@@ -87,7 +80,7 @@ def get_students(db, applicants_sql, fields):
 
             minors = []
             for f in minor.split("/"):
-                # f = clean_field_name(f.strip())
+                f = f.strip()
                 if not f:
                     continue
                 if f in fields:
@@ -95,7 +88,11 @@ def get_students(db, applicants_sql, fields):
                 else:
                     print(f"Fields not found: {f}")
 
-            students[id] = {"name": f"{last} {first}", "faculty": faculty, "core": cores, "minor": minors, "match": {}, "comment": comment
+            students[id] = {"name": f"{last} {first}",
+                            "faculty": faculty,
+                            "core": cores,
+                            "minor": minors,
+                            "match": {}
                             }
     return students
 
@@ -110,9 +107,12 @@ def get_faculty(db):
 
     with db.cursor() as cursor:
         cursor.execute(faculty_sql)
-        for id, username, sdbid, name, email in cursor.fetchall():
+        for id, username, name in cursor.fetchall():
             faculty[str(id)] = \
-                {"name": name.strip(), "logon ID": str(id), "SDB ID": str(sdbid), "username": username, "email": email.strip().lower(), "core": [], "minor": [], "match": []
+                {"name": name.strip(),
+                 "logon ID": str(id),
+                 "username": username,
+                 "core": [], "minor": [], "match": []
                  }
 
     # Get faculty fields
@@ -124,9 +124,8 @@ def get_faculty(db):
             else:
                 print("Faculty", fac, "not found.")
 
-    # Changing the id to the student database ID
-#    faculty = {faculty[id]["SDB ID"]: faculty[id] for id in faculty}
     return faculty
+
 
 def clean_faculty_name(name):
     return " ".join(reversed(name.split(", ")))
@@ -134,15 +133,20 @@ def clean_faculty_name(name):
 def faculty_of_interest(faculty, students):
     names = {faculty[f]["name"] : f for f in faculty}
     names["Svante Paabo"] = '107'
-    names["Nicholas Luscombe"] = '41'
-    names['Mohammad Khan'] = '110'
-    names['Gioia Gustavo'] = '46'
-    names['Ulf Dieckmann'] = '113'
-    names['Artur Ekert'] = '114'
-    names['Test Faculty'] = ''
+    names["Nicholas Luscombe"] = '19'
 
     for s in students:
-        students[s]["faculty"] = [names[clean_faculty_name(fac)] for fac in students[s]["faculty"] if fac]
+        facs = []
+        for fac in students[s]["faculty"]:
+            if fac:
+                name = clean_faculty_name(fac)
+                if name in names:
+                    facs.append(names[name])
+                else:
+                    print(f"Faculty of interest {name} not found")
+
+        students[s]["faculty"] = facs
+
 
 def match(faculty, students, weights):
     """
@@ -157,13 +161,17 @@ def match(faculty, students, weights):
 
     for stu in students:
         for fac in faculty:
-            co_co = sum([f in faculty[fac]["core"] for f in students[stu]["core"]])
-            co_mi = sum([f in faculty[fac]["core"] for f in students[stu]["minor"]])
-            mi_co = sum([f in faculty[fac]["minor"] for f in students[stu]["core"]])
-            mi_mi = sum([f in faculty[fac]["minor"] for f in students[stu]["minor"]])
+            co_co = sum([f in faculty[fac]["core"]
+                         for f in students[stu]["core"]])
+            co_mi = sum([f in faculty[fac]["core"]
+                         for f in students[stu]["minor"]])
+            mi_co = sum([f in faculty[fac]["minor"]
+                         for f in students[stu]["core"]])
+            mi_mi = sum([f in faculty[fac]["minor"]
+                         for f in students[stu]["minor"]])
 
-            score = co_co_score * co_co + co_mi_score * co_mi \
-                + co_mi_score * mi_co + mi_mi_score * mi_mi
+            score = co_co_score * co_co + co_mi_score * \
+                co_mi + co_mi_score * mi_co + mi_mi_score * mi_mi
 
             if fac in students[stu]["faculty"]:
                 score += interest_score
@@ -210,7 +218,7 @@ def export(db, faculty, students):
 
 
 def get_match_distribution(faculty):
-    dist = [0]*200
+    dist = [0]*1000
     for fac in faculty:
         for score, _ in faculty[fac]["match"]:
             dist[score] += 1
@@ -219,15 +227,10 @@ def get_match_distribution(faculty):
 
 def connect(login, database):
     # Connect to database
-    db = pymysql.connect(host="localhost",
-                         user="root",
-                         passwd="",
+    db = pymysql.connect(host=login["aad"]["host"],
+                         user=login["aad"]["username"],
+                         passwd=login["aad"]["password"],
                          db=database)
-
-    # db = pymysql.connect(host=login["aad"]["host"],
-    #                      user=login["aad"]["username"],
-    #                      passwd=login["aad"]["password"],
-    #                      db=database)
     return db
 
 
@@ -265,7 +268,6 @@ if __name__ == "__main__":
     fields = get_fields(db, fields_sql)
     # Faculty information
     faculty = get_faculty(db)
-    print(faculty['110'])
     # Student information
     students = get_students(db, applicants_sql, fields)
     # Clean up faculty references
