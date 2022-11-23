@@ -456,17 +456,17 @@ def make_matrix(times_all, faculty_all, students_all):
                         (time in students_all[stu]["avail"]["maybe"])
                         for fac, stu, time in m.grid)
 
-        stu_consecutive = sum(consecutives([time for fac, s, time in m.grid if s == stu and m.grid[fac, s, time]])
+        stu_consecutive = sum(consecutives([time for fac, s, time in m.grid if s == stu and value(m.grid[fac, s, time])])
                               for stu in students)
 
-        fac_consecutive = sum(consecutives([time for f, stu, time in m.grid if f == fac and m.grid[f, stu, time]]) 
+        fac_consecutive = sum(consecutives([time for f, stu, time in m.grid if f == fac and value(m.grid[f, stu, time])])
                               for fac in faculty)
 
         # stu_time_blocks = len(set((stu, times_all[time]["time block"])
         #                           for fac, stu, time in m.grid if m.grid[fac, stu, time]))
 
         fac_time_blocks = len(set((fac, times_all[time]["time block"])
-                                  for fac, stu, time in m.grid if m.grid[fac, stu, time]))
+                                  for fac, stu, time in m.grid if value(m.grid[fac, stu, time])))
 
         return matching \
             + weights["maybe available"] * (fac_maybe + stu_maybe) \
@@ -531,8 +531,6 @@ def make_matrix(times_all, faculty_all, students_all):
 
 
 
-
-    model.preprocess()
     # opt = SolverFactory('cbc', validate = False)  # Select solver
     # solver_manager = SolverManagerFactory('neos')  # Solve in neos server
     # results = solver_manager.solve(model, opt=opt)
